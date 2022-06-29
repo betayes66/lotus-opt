@@ -189,6 +189,18 @@ func (sm *StorageMinerAPI) PledgeSector(ctx context.Context) (abi.SectorID, erro
 	}
 }
 
+func (sm *StorageMinerAPI) PledgeStart(ctx context.Context) error {
+	return sm.Miner.PledgeStart()
+}
+
+func (sm *StorageMinerAPI) PledgeStatus(ctx context.Context) (int, error) {
+	return sm.Miner.PledgeStatus()
+}
+
+func (sm *StorageMinerAPI) PledgeStop(ctx context.Context) error {
+	return sm.Miner.PledgeStop()
+}
+
 func (sm *StorageMinerAPI) SectorsStatus(ctx context.Context, sid abi.SectorNumber, showOnChainInfo bool) (api.SectorInfo, error) {
 	sInfo, err := sm.Miner.SectorsStatus(ctx, sid, false)
 	if err != nil {

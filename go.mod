@@ -191,6 +191,7 @@ require (
 	github.com/daaku/go.zipexe v1.0.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/davidlazar/go-crypto v0.0.0-20200604182044-b73af7476f6c // indirect
+	github.com/deniswernert/go-fstab v0.0.0-20141204152952-eb4090f26517 // indirect
 	github.com/dgraph-io/ristretto v0.1.0 // indirect
 	github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2 // indirect
 	github.com/drand/kyber-bls12381 v0.2.1 // indirect
@@ -226,6 +227,7 @@ require (
 	github.com/golang/snappy v0.0.3 // indirect
 	github.com/google/go-cmp v0.5.7 // indirect
 	github.com/google/gopacket v1.1.19 // indirect
+	github.com/gwaylib/errors v0.0.0-20211126090330-1931a9c4fe20 // indirect
 	github.com/hannahhoward/cbor-gen-for v0.0.0-20200817222906-ea96cece81f1 // indirect
 	github.com/hashicorp/errwrap v1.0.0 // indirect
 	github.com/huin/goupnp v1.0.3 // indirect

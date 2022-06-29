@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"fmt"
+
 	"github.com/google/uuid"
 	"golang.org/x/xerrors"
 
@@ -50,6 +52,9 @@ type WorkerSelector interface {
 	Ok(ctx context.Context, task sealtasks.TaskType, spt abi.RegisteredSealProof, a *workerHandle) (bool, error) // true if worker is acceptable for performing a task
 
 	Cmp(ctx context.Context, task sealtasks.TaskType, a, b *workerHandle) (bool, error) // true if a is preferred over b
+
+	FindDataWoker(ctx context.Context, task sealtasks.TaskType, sid abi.SectorID, spt abi.RegisteredSealProof, a *workerHandle) bool
+
 }
 
 type scheduler struct {
@@ -75,6 +80,9 @@ type scheduler struct {
 }
 
 type workerHandle struct {
+
+	IP string
+
 	workerRpc Worker
 
 	tasksCache  map[sealtasks.TaskType]struct{}
@@ -146,6 +154,10 @@ type workerRequest struct {
 
 type workerResponse struct {
 	err error
+}
+
+func (w *workerRequest) SectorName() string {
+	return fmt.Sprintf("s-t0%d-%d", w.sector.ID.Miner, w.sector.ID.Number)
 }
 
 func newScheduler() *scheduler {
@@ -306,7 +318,7 @@ func (sh *scheduler) runSched() {
 				req.done()
 			}
 
-			sh.trySched()
+			//sh.trySched()
 		}
 
 	}

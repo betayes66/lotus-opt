@@ -70,4 +70,44 @@ func (s *existingSelector) Cmp(ctx context.Context, task sealtasks.TaskType, a, 
 	return a.utilization() < b.utilization(), nil
 }
 
+func (s *existingSelector) FindDataWoker(ctx context.Context, task sealtasks.TaskType, sid abi.SectorID, spt abi.RegisteredSealProof, whnd *workerHandle) bool {
+	tasks, err := whnd.workerRpc.TaskTypes(ctx)
+	if err != nil {
+		return false
+	}
+	if _, supported := tasks[task]; !supported {
+		return false
+	}
+
+	paths, err := whnd.workerRpc.Paths(ctx)
+	if err != nil {
+		return false
+	}
+
+	have := map[storiface.ID]struct{}{}
+	for _, path := range paths {
+		have[path.ID] = struct{}{}
+	}
+
+	ssize, err := spt.SectorSize()
+	if err != nil {
+		return false
+	}
+
+	best, err := s.index.StorageFindSector(ctx, sid, s.alloc, ssize, false)
+	if err != nil {
+		return false
+	}
+
+	for _, info := range best {
+		if info.Weight != 0 {
+			if _, ok := have[info.ID]; ok {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 var _ WorkerSelector = &existingSelector{}

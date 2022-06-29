@@ -23,6 +23,18 @@ func (w WorkerID) String() string {
 	return uuid.UUID(w).String()
 }
 
+type DiskStatus struct {
+	All   uint64
+	Used  uint64
+	Free  uint64
+	Avail uint64
+
+	Unsealed map[string]uint64
+	Cache    map[string]uint64
+	Sealed   map[string]uint64
+	Sum      map[string]uint64
+}
+
 type WorkerInfo struct {
 	Hostname string
 
@@ -68,6 +80,9 @@ func (wr WorkerResources) ResourceSpec(spt abi.RegisteredSealProof, tt sealtasks
 }
 
 type WorkerStats struct {
+
+	IP      string
+
 	Info    WorkerInfo
 	Tasks   []sealtasks.TaskType
 	Enabled bool

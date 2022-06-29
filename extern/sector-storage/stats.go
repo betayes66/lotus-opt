@@ -32,6 +32,9 @@ func (m *Manager) WorkerStats(ctx context.Context) map[uuid.UUID]storiface.Worke
 		}
 
 		out[uuid.UUID(id)] = storiface.WorkerStats{
+
+			IP : handle.IP,
+
 			Info:       handle.info,
 			Tasks:      taskList,
 			Enabled:    handle.enabled,

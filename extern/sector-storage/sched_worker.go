@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"sync"
+
 	"golang.org/x/xerrors"
 
 	"github.com/filecoin-project/lotus/extern/sector-storage/sealtasks"
@@ -22,6 +24,13 @@ type schedWorker struct {
 	taskDone         chan struct{}
 
 	windowsRequested int
+
+	cfg          Rwc // remote worker config
+	disk         storiface.DiskStatus
+	taskTypes    map[sealtasks.TaskType]struct{}
+	runningTasks map[string]*workerRequest // running tasks parallel number
+	lock         sync.RWMutex              // lock
+
 }
 
 func newWorkerHandle(ctx context.Context, w Worker) (*workerHandle, error) {
@@ -43,6 +52,73 @@ func newWorkerHandle(ctx context.Context, w Worker) (*workerHandle, error) {
 	}
 
 	return worker, nil
+}
+
+// context only used for startup
+func (sh *scheduler) runWorkerX(ctx context.Context, wid storiface.WorkerID, worker *workerHandle,
+	w Worker, taskTypes map[sealtasks.TaskType]struct{}) error {
+
+	// remote worker task config
+	rwtc, err := w.TaskCfg(ctx)
+	if err != nil {
+		return xerrors.Errorf("getting worker cfg: %w", err)
+	}
+	worker.IP = rwtc.IP
+
+	sh.workersLk.Lock()
+	_, exist := sh.workers[wid]
+	if exist {
+		log.Warnw("duplicated worker added", "id", wid)
+
+		// this is ok, we're already handling this worker in a different goroutine
+		sh.workersLk.Unlock()
+		return nil
+	}
+
+	sh.workers[wid] = worker
+	sh.workersLk.Unlock()
+
+	sw := &schedWorker{
+		sched:  sh,
+		worker: worker,
+
+		wid: wid,
+
+		cfg: rwtc,
+
+		heartbeatTimer:   time.NewTicker(stores.HeartbeatInterval),
+		scheduledWindows: make(chan *schedWindow, SchedWindows),
+		taskDone:         make(chan struct{}, 1),
+
+		windowsRequested: 0,
+
+		taskTypes:    taskTypes,
+		runningTasks: map[string]*workerRequest{},
+	}
+
+	if _, ok := SWGMap.Load(sw.cfg.IP); !ok {
+		SWGMap.Store(sw.cfg.IP, &SWSChan{
+			p1Chan:   make(chan *workerRequest, CAP),
+			p2Chan:   make(chan *workerRequest, CAP),
+			c1Chan:   make(chan *workerRequest, CAP),
+			finChan:  make(chan *workerRequest, CAP),
+			fetChan:  make(chan *workerRequest, CAP),
+			unsChan:  make(chan *workerRequest, CAP),
+			ruChan:   make(chan *workerRequest, CAP),
+			pru1Chan: make(chan *workerRequest, CAP),
+			pru2Chan: make(chan *workerRequest, CAP),
+			rskChan:  make(chan *workerRequest, CAP),
+			fruChan:  make(chan *workerRequest, CAP),
+		})
+	}
+
+	if _, ok := ApRunErrWorkers.Load(sw.cfg.IP); ok {
+		ApRunErrWorkers.Delete(sw.cfg.IP)
+	}
+
+	go sw.handleWorker()
+
+	return nil
 }
 
 // context only used for startup
@@ -99,6 +175,9 @@ func (sw *schedWorker) handleWorker() {
 	}()
 
 	defer sw.heartbeatTimer.Stop()
+
+	sw.loopSchedule(ctx)
+	return // note: From here on, the following code is invalid
 
 	for {
 		{

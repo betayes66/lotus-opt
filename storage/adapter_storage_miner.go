@@ -431,3 +431,7 @@ func (s SealingAPIAdapter) StateGetRandomnessFromTickets(ctx context.Context, pe
 func (s SealingAPIAdapter) ChainReadObj(ctx context.Context, ocid cid.Cid) ([]byte, error) {
 	return s.delegate.ChainReadObj(ctx, ocid)
 }
+
+func (s SealingAPIAdapter) WalletBalance(ctx context.Context, maddr address.Address) (types.BigInt, error)  {
+	return s.delegate.WalletBalance(ctx, maddr)
+}

@@ -5,6 +5,9 @@ package api
 import (
 	"context"
 	"encoding/json"
+
+	sectorstorage "github.com/filecoin-project/lotus/extern/sector-storage"
+
 	"time"
 
 	"github.com/filecoin-project/go-address"
@@ -645,6 +648,11 @@ type StorageMinerStruct struct {
 	NetStruct
 
 	Internal struct {
+
+		PledgeStart    func(context.Context) error        `perm:"admin"`
+		PledgeStatus func(context.Context) (int, error) `perm:"read"`
+		PledgeStop   func(context.Context) error        `perm:"admin"`
+
 		ActorAddress func(p0 context.Context) (address.Address, error) `perm:"read"`
 
 		ActorAddressConfig func(p0 context.Context) (AddressConfig, error) `perm:"read"`
@@ -908,6 +916,11 @@ type WalletStub struct {
 
 type WorkerStruct struct {
 	Internal struct {
+
+		TaskCfg func(p0 context.Context) (sectorstorage.Rwc, error) `perm:"admin"`
+
+		Disk func(p0 context.Context) (storiface.DiskStatus, error) `perm:"admin"`
+
 		AddPiece func(p0 context.Context, p1 storage.SectorRef, p2 []abi.UnpaddedPieceSize, p3 abi.UnpaddedPieceSize, p4 storage.Data) (storiface.CallID, error) `perm:"admin"`
 
 		DataCid func(p0 context.Context, p1 abi.UnpaddedPieceSize, p2 storage.Data) (storiface.CallID, error) `perm:"admin"`
@@ -975,6 +988,66 @@ type WorkerStruct struct {
 type WorkerStub struct {
 }
 
+// PledgeStart
+func (s *StorageMinerStruct) PledgeStart(p0 context.Context) error {
+	if s.Internal.PledgeStart == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.PledgeStart(p0)
+}
+
+func (s *StorageMinerStub) PledgeStart(p0 context.Context) error {
+	return ErrNotSupported
+}
+
+// PledgeStatus
+func (s *StorageMinerStruct) PledgeStatus(p0 context.Context) (int, error) {
+	if s.Internal.PledgeStatus == nil {
+		return 0, ErrNotSupported
+	}
+	return s.Internal.PledgeStatus(p0)
+}
+
+func (s *StorageMinerStub) PledgeStatus(p0 context.Context) (int, error) {
+	return 0, ErrNotSupported
+}
+
+// PledgeStop
+func (s *StorageMinerStruct) PledgeStop(p0 context.Context) error {
+	if s.Internal.PledgeStop == nil {
+		return ErrNotSupported
+	}
+	return s.Internal.PledgeStop(p0)
+}
+
+func (s *StorageMinerStub) PledgeStop(p0 context.Context) error {
+	return ErrNotSupported
+}
+
+// TaskCfg
+func (s *WorkerStruct) TaskCfg(p0 context.Context) (sectorstorage.Rwc, error) {
+	if s.Internal.TaskCfg == nil {
+		return *new(sectorstorage.Rwc), ErrNotSupported
+	}
+	return s.Internal.TaskCfg(p0)
+}
+
+func (s *WorkerStub) TaskCfg(p0 context.Context) (sectorstorage.Rwc, error) {
+	return *new(sectorstorage.Rwc), ErrNotSupported
+}
+
+// Disk
+func (s *WorkerStruct) Disk(p0 context.Context) (storiface.DiskStatus, error) {
+	if s.Internal.Disk == nil {
+		return *new(storiface.DiskStatus), ErrNotSupported
+	}
+	return s.Internal.Disk(p0)
+}
+
+func (s *WorkerStub) Disk(p0 context.Context) (storiface.DiskStatus, error) {
+	return *new(storiface.DiskStatus), ErrNotSupported
+}
+
 func (s *ChainIOStruct) ChainHasObj(p0 context.Context, p1 cid.Cid) (bool, error) {
 	if s.Internal.ChainHasObj == nil {
 		return false, ErrNotSupported
@@ -989,7 +1062,7 @@ func (s *ChainIOStub) ChainHasObj(p0 context.Context, p1 cid.Cid) (bool, error) 
 func (s *ChainIOStruct) ChainPutObj(p0 context.Context, p1 blocks.Block) error {
 	if s.Internal.ChainPutObj == nil {
 		return ErrNotSupported
-	}
+	};
 	return s.Internal.ChainPutObj(p0, p1)
 }
 

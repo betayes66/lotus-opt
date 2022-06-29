@@ -80,6 +80,9 @@ type SealingAPI interface {
 	StateGetRandomnessFromBeacon(ctx context.Context, personalization crypto.DomainSeparationTag, randEpoch abi.ChainEpoch, entropy []byte, tok TipSetToken) (abi.Randomness, error)
 	StateGetRandomnessFromTickets(ctx context.Context, personalization crypto.DomainSeparationTag, randEpoch abi.ChainEpoch, entropy []byte, tok TipSetToken) (abi.Randomness, error)
 	ChainReadObj(context.Context, cid.Cid) ([]byte, error)
+
+	WalletBalance(ctx context.Context, maddr address.Address) (types.BigInt, error)
+
 }
 
 type SectorStateNotifee func(before, after SectorInfo)

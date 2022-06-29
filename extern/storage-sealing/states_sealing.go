@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 
+	"time"
+
 	"github.com/filecoin-project/go-state-types/proof"
 
 	"github.com/ipfs/go-cid"
@@ -449,6 +451,18 @@ func (m *Sealing) handleSubmitPreCommitBatch(ctx statemachine.Context, sector Se
 }
 
 func (m *Sealing) handlePreCommitWait(ctx statemachine.Context, sector SectorInfo) error {
+
+	// acquire to set balance limit in env
+	for {
+		// balance control
+		if !m.checkBalance(balanceLimit) {
+			log.Warnf("notice: not sufficient funds, please recharge as soon as possible ... ")
+			time.Sleep(time.Minute * 6)
+			continue
+		}
+		break
+	}
+
 	if sector.PreCommitMessage == nil {
 		return ctx.Send(SectorChainPreCommitFailed{xerrors.Errorf("precommit message was nil")})
 	}

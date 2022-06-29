@@ -58,6 +58,13 @@ var runCmd = &cli.Command{
 			}
 		}
 
+		// use for bellperson distinguish miner/worker
+		err := os.Setenv("WIN-POST", "true")
+		if err != nil {
+			log.Warnf("os.Setenv(\"WINPOST\", \"true\") is Err: %+v", err)
+			return err
+		}
+
 		ctx, _ := tag.New(lcli.DaemonContext(cctx),
 			tag.Insert(metrics.Version, build.BuildVersion),
 			tag.Insert(metrics.Commit, build.CurrentCommit),

@@ -50,6 +50,9 @@ func main() {
 		lcli.WithCategory("market", dagstoreCmd),
 		lcli.WithCategory("market", indexProvCmd),
 		lcli.WithCategory("storage", sectorsCmd),
+
+		lcli.WithCategory("storage", autoPledgeCmd),
+
 		lcli.WithCategory("storage", provingCmd),
 		lcli.WithCategory("storage", storageCmd),
 		lcli.WithCategory("storage", sealingCmd),

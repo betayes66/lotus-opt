@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 
+	sectorstorage "github.com/filecoin-project/lotus/extern/sector-storage"
+
 	"github.com/filecoin-project/go-state-types/proof"
 
 	"github.com/google/uuid"
@@ -30,6 +32,11 @@ type Worker interface {
 
 	// TaskType -> Weight
 	TaskTypes(context.Context) (map[sealtasks.TaskType]struct{}, error) //perm:admin
+
+
+	TaskCfg(context.Context) (sectorstorage.Rwc, error)           //perm:admin
+	Disk(context.Context) (storiface.DiskStatus, error)           //perm:admin
+
 	Paths(context.Context) ([]storiface.StoragePath, error)             //perm:admin
 	Info(context.Context) (storiface.WorkerInfo, error)                 //perm:admin
 

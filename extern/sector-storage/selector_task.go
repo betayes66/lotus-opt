@@ -46,4 +46,34 @@ func (s *taskSelector) Cmp(ctx context.Context, _ sealtasks.TaskType, a, b *work
 	return a.utilization() < b.utilization(), nil
 }
 
+func (s *taskSelector) FindDataWoker(ctx context.Context, task sealtasks.TaskType, sid abi.SectorID, spt abi.RegisteredSealProof, whnd *workerHandle) bool {
+	tasks, err := whnd.workerRpc.TaskTypes(ctx)
+	if err != nil {
+		return false
+	}
+	if _, supported := tasks[task]; !supported {
+		return false
+	}
+
+	paths, err := whnd.workerRpc.Paths(ctx)
+	if err != nil {
+		return false
+	}
+
+	have := map[storiface.ID]struct{}{}
+	for _, path := range paths {
+		have[path.ID] = struct{}{}
+	}
+
+	for _, info := range s.best {
+		if info.Weight != 0 {
+			if _, ok := have[info.ID]; ok {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 var _ WorkerSelector = &taskSelector{}

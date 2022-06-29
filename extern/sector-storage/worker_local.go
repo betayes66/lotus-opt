@@ -11,6 +11,18 @@ import (
 	"sync/atomic"
 	"time"
 
+	"bytes"
+	"fmt"
+	gofstab "github.com/deniswernert/go-fstab"
+	"github.com/gwaylib/errors"
+	"io/ioutil"
+	"net"
+	"os/exec"
+	"path/filepath"
+	"runtime/debug"
+	"strings"
+	"syscall"
+
 	"github.com/filecoin-project/go-state-types/proof"
 
 	"github.com/elastic/go-sysinfo"
@@ -30,9 +42,18 @@ import (
 	"github.com/filecoin-project/lotus/extern/sector-storage/storiface"
 )
 
+const (
+	B  = 1
+	KB = 1024 * B
+	MB = 1024 * KB
+)
+
 var pathTypes = []storiface.SectorFileType{storiface.FTUnsealed, storiface.FTSealed, storiface.FTCache, storiface.FTUpdate, storiface.FTUpdateCache}
 
 type WorkerConfig struct {
+
+	TaskCfg Rwc
+
 	TaskTypes []sealtasks.TaskType
 	NoSwap    bool
 
@@ -72,6 +93,9 @@ type LocalWorker struct {
 	session     uuid.UUID
 	testDisable int64
 	closing     chan struct{}
+
+	taskCfg Rwc
+
 }
 
 func newLocalWorker(executor ExecutorFunc, wcfg WorkerConfig, envLookup EnvFunc, store stores.Store, local *stores.Local, sindex stores.SectorIndex, ret storiface.WorkerReturn, cst *statestore.StateStore) *LocalWorker {
@@ -97,6 +121,9 @@ func newLocalWorker(executor ExecutorFunc, wcfg WorkerConfig, envLookup EnvFunc,
 		challengeReadTimeout: wcfg.ChallengeReadTimeout,
 		session:              uuid.New(),
 		closing:              make(chan struct{}),
+
+		taskCfg: wcfg.TaskCfg,
+
 	}
 
 	if wcfg.MaxParallelChallengeReads > 0 {
@@ -355,6 +382,18 @@ func (l *LocalWorker) DataCid(ctx context.Context, pieceSize abi.UnpaddedPieceSi
 	})
 }
 
+var RwLock = sync.RWMutex{}
+func ln(src string, dst string) error {
+	var errOut bytes.Buffer
+	cmd := exec.Command("/usr/bin/env", "ln", src, dst)
+	cmd.Stderr = &errOut
+	if err := cmd.Run(); err != nil {
+		return xerrors.Errorf("exec ln (stderr: %s): %w", strings.TrimSpace(errOut.String()), err)
+	}
+	return nil
+}
+
+
 func (l *LocalWorker) AddPiece(ctx context.Context, sector storage.SectorRef, epcs []abi.UnpaddedPieceSize, sz abi.UnpaddedPieceSize, r io.Reader) (storiface.CallID, error) {
 	sb, err := l.executor()
 	if err != nil {
@@ -362,6 +401,82 @@ func (l *LocalWorker) AddPiece(ctx context.Context, sector storage.SectorRef, ep
 	}
 
 	return l.asyncCall(ctx, sector, AddPiece, func(ctx context.Context, ci storiface.CallID) (interface{}, error) {
+
+		if os.Getenv("AP_CACHE") == "true" { // use ap cache
+			RwLock.Lock()
+			defer RwLock.Unlock()
+
+			log.Infof("LocalWork.AddPiece : miner rpc call add piece  sector:%+v, epcs:%+v, sz:%+v, r:%+v", sector, epcs, sz, r)
+			storagePaths, pathsErr := l.Paths(ctx)
+			if pathsErr != nil {
+				return nil, pathsErr
+			}
+
+			for _, path := range storagePaths {
+				if !path.CanSeal {
+					continue
+				}
+
+				var (
+					linkPieceFile = fmt.Sprintf("%s/linkPieceFile", path.LocalPath)
+					cachePieceCid = fmt.Sprintf("%s/cachePieceCid", path.LocalPath)
+					fileSrc       = filepath.Join(path.LocalPath, fmt.Sprintf("unsealed/s-t0%d-%d", sector.ID.Miner, sector.ID.Number))
+					f1, lpfErr    = os.Stat(linkPieceFile)
+					_, cpcErr     = os.Stat(cachePieceCid)
+					flag          bool
+				)
+
+			redo:
+				// " err != nil " is true => " os.IsNotExist(lpfErr) " is true
+				if os.IsNotExist(lpfErr) || os.IsNotExist(cpcErr) || flag || f1.Size() < 34359738378 {
+
+					pieceInfo, apErr := sb.AddPiece(ctx, sector, epcs, sz, r)
+					if apErr != nil {
+						return nil, apErr
+					}
+					if lnFlErr := ln(fileSrc, linkPieceFile); lnFlErr != nil {
+						log.Errorf("ln(fileSrc, linkPieceFile) is err:%+v", lnFlErr)
+						return pieceInfo, nil
+					}
+					_, statErr := os.Stat(cachePieceCid)
+					if statErr != nil && os.IsNotExist(statErr) {
+						if wfErr := ioutil.WriteFile(cachePieceCid, []byte(pieceInfo.PieceCID.String()), os.ModePerm); wfErr != nil {
+							log.Errorf("os.Stat(x) is err:%+v or ioutil.WriteFile(x) is err:%+v", statErr, wfErr)
+						}
+					}
+					return pieceInfo, nil
+				}
+
+				if lnLfErr := ln(linkPieceFile, fileSrc); lnLfErr != nil {
+					log.Errorf("ln(linkPieceFile, fileSrc) is err:%+v", lnLfErr)
+					flag = true
+					goto redo
+				}
+
+				if data, rfErr := ioutil.ReadFile(cachePieceCid); rfErr != nil {
+					log.Errorf("ioutil.ReadFile(x) is err:%+v", rfErr)
+					flag = true
+					goto redo
+				} else {
+					cpc, parseErr := cid.Parse(string(data))
+					if parseErr != nil {
+						log.Errorf("cid.Parse(string(data)) is err:%+v", parseErr)
+						flag = true
+						goto redo
+					}
+					if sdsErr := l.sindex.StorageDeclareSector(ctx, path.ID, sector.ID, storiface.FTUnsealed, path.CanStore); sdsErr != nil {
+						log.Errorf("l.sindex.StorageDeclareSector(ctx ... ) is err:%+v", sdsErr)
+						flag = true
+						goto redo
+					}
+					return abi.PieceInfo{
+						Size:     sz.Padded(),
+						PieceCID: cpc,
+					}, nil
+				}
+			}
+		}
+
 		return sb.AddPiece(ctx, sector, epcs, sz, r)
 	})
 }
@@ -407,8 +522,109 @@ func (l *LocalWorker) SealPreCommit2(ctx context.Context, sector storage.SectorR
 	}
 
 	return l.asyncCall(ctx, sector, SealPreCommit2, func(ctx context.Context, ci storiface.CallID) (interface{}, error) {
+
+		if os.Getenv("ASSIGN_P2_CPU_LIST") != "" {
+			return SubProcessSealP2(ctx, sector, phase1Out)
+		}
+
 		return sb.SealPreCommit2(ctx, sector, phase1Out)
 	})
+}
+
+func SubProcessSealP2(ctx context.Context, sector storage.SectorRef, pc1o storage.PreCommit1Out) (storage.SectorCids, error) {
+	defer func() {
+		if e := recover(); e != nil {
+			log.Errorf("sub_process seal p2 panic: %v\n%v", e, string(debug.Stack()))
+		}
+	}()
+
+	task := ffiwrapper.P2TaskIn{
+		Sector:    sector,
+		Phase1Out: pc1o,
+	}
+	args, err := json.Marshal(task)
+	if err != nil {
+		return storage.SectorCids{}, errors.As(err)
+	}
+	programName := os.Args[0]
+
+	unixAddr := filepath.Join(os.TempDir(), ".p2-"+sector.ID.Number.String()+"-"+uuid.New().String())
+	defer os.Remove(unixAddr)
+
+	var cmd *exec.Cmd
+	if os.Getenv("ASSIGN_P2_CPU_LIST") != "" {
+		cpuList := os.Getenv("ASSIGN_P2_CPU_LIST")
+		cmd = exec.CommandContext(context.TODO(), "taskset", "-c", cpuList, programName,
+			"precommit2",
+			"--worker-repo", os.Getenv("WORKER_PATH"),
+			"--name", task.TaskName(),
+			"--addr", unixAddr,
+		)
+	} else {
+		cmd = exec.CommandContext(context.TODO(), programName,
+			"precommit2",
+			"--worker-repo", os.Getenv("WORKER_PATH"),
+			"--name", task.TaskName(),
+			"--addr", unixAddr,
+		)
+	}
+
+	// set the env
+	cmd.Env = os.Environ()
+	// output the stderr log
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = os.Stdout
+
+	if err := cmd.Start(); err != nil {
+		return storage.SectorCids{}, errors.As(err)
+	}
+	defer func() {
+		time.Sleep(3e9)    // wait 3 seconds for exit.
+		cmd.Process.Kill() // restfull exit.
+		if err := cmd.Wait(); err != nil {
+			log.Error(err)
+		}
+	}()
+	// transfer precommit1 parameters
+	var d net.Dialer
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*6)
+	defer cancel()
+
+	d.LocalAddr = nil // if you have a local addr, add it here
+	raddr := net.UnixAddr{Name: unixAddr, Net: "unix"}
+
+	retryTime := 0
+loopUnixConn:
+	conn, err := d.DialContext(ctx, "unix", raddr.String())
+	if err != nil {
+		retryTime++
+		if retryTime < 30 {
+			time.Sleep(1e9)
+			goto loopUnixConn
+		}
+		return storage.SectorCids{}, errors.As(err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.Write(args); err != nil {
+		return storage.SectorCids{}, errors.As(err)
+	}
+
+	// waiting to receive p2 sub process seal result's data
+	out, err := ffiwrapper.ReadUnixConn(conn)
+	if err != nil {
+		return storage.SectorCids{}, errors.As(err)
+	}
+
+	resp := ffiwrapper.ExecP2TaskOut{}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return storage.SectorCids{}, errors.As(err)
+	}
+	if len(resp.Err) > 0 {
+		return storage.SectorCids{}, xerrors.Errorf(resp.Err)
+	}
+
+	return resp.Data, nil
 }
 
 func (l *LocalWorker) SealCommit1(ctx context.Context, sector storage.SectorRef, ticket abi.SealRandomness, seed abi.InteractiveSealRandomness, pieces []abi.PieceInfo, cids storage.SectorCids) (storiface.CallID, error) {
@@ -707,6 +923,126 @@ func (l *LocalWorker) TaskTypes(context.Context) (map[sealtasks.TaskType]struct{
 	defer l.taskLk.Unlock()
 
 	return l.acceptTasks, nil
+}
+
+func (l *LocalWorker) TaskCfg(context.Context) (Rwc, error) {
+	l.taskLk.Lock()
+	defer l.taskLk.Unlock()
+	return l.taskCfg, nil
+}
+
+func (l *LocalWorker) Disk(context.Context) (storiface.DiskStatus, error) {
+	if disk := disk(); disk != nil {
+		return *disk, nil
+	}
+
+	return storiface.DiskStatus{}, errors.New("invoke diskAll fail ")
+}
+
+func disk() (disk *storiface.DiskStatus) {
+	// parse mount dir
+	mounts, err := gofstab.ParseProc()
+	if err != nil {
+		log.Warnf("gofstab.ParseProc() is fail")
+		return
+	}
+
+	var (
+		unsealedPath = os.Getenv("LOTUS_WORKER_PATH") + "/unsealed/"
+		cachePath    = os.Getenv("LOTUS_WORKER_PATH") + "/cache/"
+		sealedPath   = os.Getenv("LOTUS_WORKER_PATH") + "/sealed/"
+	)
+	if os.Getenv("LOTUS_WORKER_PATH") == "" {
+		unsealedPath = os.Getenv("WORKER_PATH") + unsealedPath
+		cachePath = os.Getenv("WORKER_PATH") + cachePath
+		sealedPath = os.Getenv("WORKER_PATH") + sealedPath
+	}
+
+	for _, val := range mounts {
+		if strings.Contains(val.File, "/mnt") {
+			disk = diskUsage(val.File)
+			sum := make(map[string]uint64)
+			disk.Unsealed = sectorSize(unsealedPath, val.File, sum)
+			disk.Cache = sectorSize(cachePath, val.File, sum)
+			disk.Sealed = sectorSize(sealedPath, val.File, sum)
+			disk.Sum = sum
+			return
+		}
+	}
+	return
+}
+
+// disk usage of path/disk
+func diskUsage(path string) *storiface.DiskStatus {
+	fs := syscall.Statfs_t{}
+	err := syscall.Statfs(path, &fs)
+	if err != nil {
+		return nil
+	}
+
+	var ds storiface.DiskStatus
+	ds.All = fs.Blocks * uint64(fs.Bsize) / MB
+	ds.Free = fs.Bfree * uint64(fs.Bsize) / MB
+	ds.Used = ds.All - ds.Free
+
+	ds.Avail = fs.Bavail * uint64(fs.Bsize) / MB
+	return &ds
+}
+
+func DirSize(path string) (uint64, error) {
+	var size uint64
+	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+		if !info.IsDir() {
+			size += uint64(info.Size())
+		}
+		return err
+	})
+	return size, err
+}
+
+func sectorSize(path string, val string, sum map[string]uint64) map[string]uint64 {
+	if strings.Contains(path, val) {
+		entries, err := ioutil.ReadDir(path)
+		if err != nil {
+			log.Warnf("ioutil.ReadDir(%+v) is fail", path)
+			return nil
+		}
+
+		m := make(map[string]uint64)
+		for _, entry := range entries {
+			if strings.Contains(entry.Name(), "s-t") {
+				// dir under cache directory
+				if entry.IsDir() && strings.Contains(path, "/cache/") {
+					// make sure the dir is exist
+					if _, err = ioutil.ReadDir(path + entry.Name()); err != nil {
+						log.Warnf("ioutil.ReadDir(%+v + %+v) is fail", path, entry.Name())
+						continue
+					}
+					size, err := DirSize(path + entry.Name())
+					if err != nil {
+						log.Warnf("DirSize(%+v%+v) is fail", path, entry.Name())
+						continue
+					}
+					m[entry.Name()] = size / MB
+					sum[entry.Name()] += size / MB
+				}
+				// file under unsealed/sealed directory
+				if !entry.IsDir() && (strings.Contains(path, "/unsealed/") ||
+					strings.Contains(path, "/sealed/")) {
+					size, err := DirSize(path + entry.Name())
+					if err != nil {
+						log.Warnf("DirSize(%+v%+v) is fail", path, entry.Name())
+						continue
+					}
+					m[entry.Name()] = size / MB
+					sum[entry.Name()] += size / MB
+				}
+			}
+		}
+		return m
+	}
+
+	return nil
 }
 
 func (l *LocalWorker) TaskDisable(ctx context.Context, tt sealtasks.TaskType) error {

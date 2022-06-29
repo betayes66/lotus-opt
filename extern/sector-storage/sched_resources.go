@@ -10,14 +10,14 @@ import (
 )
 
 func (a *activeResources) withResources(id storiface.WorkerID, wr storiface.WorkerInfo, r storiface.Resources, locker sync.Locker, cb func() error) error {
-	for !a.canHandleRequest(r, id, "withResources", wr) {
+	/*for !a.canHandleRequest(r, id, "withResources", wr) {
 		if a.cond == nil {
 			a.cond = sync.NewCond(locker)
 		}
 		a.waiting++
 		a.cond.Wait()
 		a.waiting--
-	}
+	}*/
 
 	a.add(wr.Resources, r)
 

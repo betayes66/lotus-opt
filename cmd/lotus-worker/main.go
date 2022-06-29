@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/filecoin-project/lotus/extern/sector-storage/ffiwrapper"
+
 	"github.com/google/uuid"
 	"github.com/ipfs/go-datastore/namespace"
 	logging "github.com/ipfs/go-log/v2"
@@ -41,6 +43,8 @@ import (
 	"github.com/filecoin-project/lotus/node/repo"
 )
 
+const LIMITNUMBER = 1
+
 var log = logging.Logger("main")
 
 const FlagWorkerRepo = "worker-repo"
@@ -61,6 +65,8 @@ func main() {
 		waitQuietCmd,
 		resourcesCmd,
 		tasksCmd,
+
+		ffiwrapper.P2Cmd,
 	}
 
 	app := &cli.App{
@@ -208,6 +214,38 @@ var runCmd = &cli.Command{
 			Usage: "used when 'listen' is unspecified. must be a valid duration recognized by golang's time.ParseDuration function",
 			Value: "30m",
 		},
+
+		&cli.UintFlag{
+			Name:  "max",
+			Value: 0,
+			Usage: "max concurrent tasks for memory.",
+		},
+		&cli.UintFlag{
+			Name:  "ap",
+			Value: 0,
+			Usage: "addpiece concurrent tasks is less than max concurrent tasks",
+		},
+		&cli.UintFlag{
+			Name:  "p1",
+			Value: 0,
+			Usage: "precommit1 concurrent tasks is less than max concurrent tasks",
+		},
+		&cli.UintFlag{
+			Name:  "p2",
+			Value: 0,
+			Usage: "precommit2 concurrent tasks is less than max concurrent tasks",
+		},
+		&cli.UintFlag{
+			Name:  "c2",
+			Value: 0,
+			Usage: "commit2 concurrent tasks is less than max concurrent tasks",
+		},
+		&cli.StringFlag{
+			Name:  "gpu",
+			Usage: "select gpu index",
+			Value: "0",
+		},
+
 	},
 	Before: func(cctx *cli.Context) error {
 		if cctx.IsSet("address") {
@@ -245,11 +283,19 @@ var runCmd = &cli.Command{
 
 		var nodeApi api.StorageMiner
 		var closer func()
+
+		var minerAddr string
+
 		for {
 			nodeApi, closer, err = lcli.GetStorageMinerAPI(cctx, cliutil.StorageMinerUseHttp)
 			if err == nil {
 				_, err = nodeApi.Version(ctx)
 				if err == nil {
+
+					if addr, err := nodeApi.ActorAddress(ctx); err == nil {
+						minerAddr = addr.String()
+					}
+
 					break
 				}
 			}
@@ -298,6 +344,14 @@ var runCmd = &cli.Command{
 		var taskTypes []sealtasks.TaskType
 		var workerType string
 
+		var (
+			maxConNum = uint8(cctx.Uint("max"))
+			apConNum  = uint8(cctx.Uint("ap"))
+			p1ConNum  = uint8(cctx.Uint("p1"))
+			p2ConNum  = uint8(cctx.Uint("p2"))
+			c2ConNum  = uint8(cctx.Uint("c2"))
+		)
+
 		if cctx.Bool("windowpost") {
 			workerType = sealtasks.WorkerWindowPoSt
 			taskTypes = append(taskTypes, sealtasks.TTGenerateWindowPoSt)
@@ -312,19 +366,22 @@ var runCmd = &cli.Command{
 			taskTypes = append(taskTypes, sealtasks.TTFetch, sealtasks.TTCommit1, sealtasks.TTProveReplicaUpdate1, sealtasks.TTFinalize, sealtasks.TTFinalizeReplicaUpdate)
 		}
 
-		if (workerType == sealtasks.WorkerSealing || cctx.IsSet("addpiece")) && cctx.Bool("addpiece") {
+		if (workerType == sealtasks.WorkerSealing || cctx.IsSet("addpiece")) && cctx.Bool("addpiece") && (apConNum != 0 || (p1ConNum != 0 && p2ConNum != 0)) {
 			taskTypes = append(taskTypes, sealtasks.TTAddPiece, sealtasks.TTDataCid)
+			if apConNum == 0 || os.Getenv("AP_CACHE") == "true" {
+				apConNum = LIMITNUMBER
+			}
 		}
-		if (workerType == sealtasks.WorkerSealing || cctx.IsSet("precommit1")) && cctx.Bool("precommit1") {
+		if (workerType == sealtasks.WorkerSealing || cctx.IsSet("precommit1")) && cctx.Bool("precommit1")  && p1ConNum != 0 {
 			taskTypes = append(taskTypes, sealtasks.TTPreCommit1)
 		}
 		if (workerType == sealtasks.WorkerSealing || cctx.IsSet("unseal")) && cctx.Bool("unseal") {
 			taskTypes = append(taskTypes, sealtasks.TTUnseal)
 		}
-		if (workerType == sealtasks.WorkerSealing || cctx.IsSet("precommit2")) && cctx.Bool("precommit2") {
+		if (workerType == sealtasks.WorkerSealing || cctx.IsSet("precommit2")) && cctx.Bool("precommit2") && p2ConNum != 0 {
 			taskTypes = append(taskTypes, sealtasks.TTPreCommit2)
 		}
-		if (workerType == sealtasks.WorkerSealing || cctx.IsSet("commit")) && cctx.Bool("commit") {
+		if (workerType == sealtasks.WorkerSealing || cctx.IsSet("commit")) && cctx.Bool("commit") && c2ConNum != 0 {
 			taskTypes = append(taskTypes, sealtasks.TTCommit2)
 		}
 		if (workerType == sealtasks.WorkerSealing || cctx.IsSet("replica-update")) && cctx.Bool("replica-update") {
@@ -344,6 +401,11 @@ var runCmd = &cli.Command{
 			if taskType.WorkerType() != workerType {
 				return xerrors.Errorf("expected all task types to be for %s worker, but task %s is for %s worker", workerType, taskType, taskType.WorkerType())
 			}
+		}
+
+		// assign concurrency task judge
+		if maxConNum == 0 {
+			maxConNum = apConNum + p1ConNum + p2ConNum + c2ConNum
 		}
 
 		// Open repo
@@ -472,6 +534,18 @@ var runCmd = &cli.Command{
 		workerApi := &sealworker.Worker{
 			LocalWorker: sectorstorage.NewLocalWorker(sectorstorage.WorkerConfig{
 				TaskTypes:                 taskTypes,
+
+				TaskCfg: sectorstorage.Rwc{
+					IP:        address,
+					MinerAddr: minerAddr,
+
+					Max: maxConNum,
+					Ap:  apConNum,
+					P1:  p1ConNum,
+					P2:  p2ConNum,
+					C2:  c2ConNum,
+				},
+
 				NoSwap:                    cctx.Bool("no-swap"),
 				MaxParallelChallengeReads: cctx.Int("post-parallel-reads"),
 				ChallengeReadTimeout:      cctx.Duration("post-read-timeout"),
