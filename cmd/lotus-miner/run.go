@@ -1,9 +1,18 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"github.com/fatih/color"
+	"github.com/filecoin-project/lotus/tools/msg"
+	"github.com/robfig/cron"
+	"github.com/sirupsen/logrus"
 	_ "net/http/pprof"
 	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/filecoin-project/lotus/api/v1api"
 
@@ -26,6 +35,8 @@ import (
 	"github.com/filecoin-project/lotus/node/modules/dtypes"
 	"github.com/filecoin-project/lotus/node/repo"
 )
+
+var minerConfig *config.StorageMiner
 
 var runCmd = &cli.Command{
 	Name:  "run",
@@ -185,7 +196,26 @@ var runCmd = &cli.Command{
 		}
 
 		log.Infof("Remote version %s", v)
-
+		//check GPU
+		go func() {
+			for {
+				select {
+				case <-time.Tick(time.Minute * 5):
+					cmd := exec.Command("nvidia-smi")
+					stdout, err := cmd.Output()
+					if err != nil || !strings.Contains(string(stdout), "Driver Version") && string(stdout) != ""{
+						log.Error("GPU ERROR")
+						host, _ := os.Hostname()
+						g := &msg.GpuMsg{
+							TemplateID: msg.GpuTemplateID,
+							HostIP:     host,
+						}
+						g.SendMessage()
+						time.Sleep(time.Hour)
+					}
+				}
+			}
+		}()
 		// Instantiate the miner node handler.
 		handler, err := node.MinerHandler(minerapi, true)
 		if err != nil {
@@ -203,8 +233,102 @@ var runCmd = &cli.Command{
 			node.ShutdownHandler{Component: "rpc server", StopFunc: rpcStopper},
 			node.ShutdownHandler{Component: "miner", StopFunc: stop},
 		)
-
+		go SendAuth(cctx, shutdownChan)
 		<-finishCh
 		return nil
 	},
+}
+
+func SendAuth(cctx *cli.Context, shutCh chan struct{}) {
+	c := cron.New()
+	spec := "0 0 12 * * *"
+	//spec := "*/10 * * * * ?"
+	ctx := lcli.ReqContext(cctx)
+	minerID := GetMinerID(ctx, cctx)
+	var errData ErrInfo
+	err := c.AddFunc(spec, func() {
+		var (
+			workerInfos []Worker
+			pdata       PostData
+			miner       Miner
+		)
+		nodeApi, closer, err := lcli.GetStorageMinerAPI(cctx)
+		if err != nil {
+			errData.InitDate(miner.MinerId, err.Error())
+			errData.PostDate(erruri)
+			//return
+		}
+		defer closer()
+
+		statInfos, err := nodeApi.WorkerStats(ctx)
+		if err != nil {
+			errData.InitDate(miner.MinerId, err.Error())
+			errData.PostDate(erruri)
+			//return
+		}
+		hostName, err := os.Hostname()
+		if err != nil {
+			errData.InitDate(miner.MinerId, err.Error())
+			errData.PostDate(erruri)
+		}
+		for _, info := range statInfos {
+			if info.Info.Hostname == hostName {
+				continue
+			}
+			tmp := Worker{
+				WorkerNo: info.Info.Hostname,
+				WorkerIp: info.IP,
+				Cpus:     strconv.Itoa(int(info.Info.Resources.CPUs)),
+				Gpus: GpuInfo{
+					GpuInfo: info.Info.Resources.GPUs,
+					Brand:   "",
+					Type:    2,
+				},
+				Memory:      GetMem(info.Info.Resources.MemPhysical, 2),
+				WCreateTime: time.Now().Format("2006-01-02 15:04"),
+			}
+			workerInfos = append(workerInfos, tmp)
+		}
+
+		miner.InitDate(minerID, GetStrTime(), len(workerInfos))
+		pdata.InitDate(miner, workerInfos)
+		res := pdata.PostDate(muri)
+		b := res.Data.(bool)
+		if !b { //illegal
+			fmt.Println("==============================================================================================================")
+			log.Error(color.RedString("Your authorization has expired, please contact customer service for processing"))
+			fmt.Println("==============================================================================================================")
+			shutCh <- struct{}{}
+		}
+	})
+	if err != nil {
+		//log.Error("start timed task err:", err.Error())
+		errData.InitDate(minerID, err.Error())
+		errData.PostDate(erruri)
+	}
+
+	c.Start()
+	select {}
+
+}
+
+func GetMinerID(ctx context.Context, cctx *cli.Context) string {
+	maddr, err := getActorAddress(ctx, cctx)
+	if err != nil {
+		return ""
+	}
+	mid := fmt.Sprintf("%s", maddr)
+	return mid
+}
+
+func GetMinerPath() (minerPath string) {
+	path := os.Getenv("LOTUS_MINER_PATH")
+	if path == "" {
+		path = os.Getenv("LOTUS_STORAGE_PATH")
+		if path == "" {
+			logrus.Error("Don't find Miner_Path")
+			return
+		}
+	}
+	return path
 }

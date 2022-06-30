@@ -40,6 +40,9 @@ func barString(total, y, g float64) string {
 	yBars := int(math.Round(y / total * barCols))
 	gBars := int(math.Round(g / total * barCols))
 	eBars := int(barCols) - yBars - gBars
+	if eBars <= 0 {
+		eBars = 1
+	}
 	var barString = color.YellowString(strings.Repeat("|", yBars)) +
 		color.GreenString(strings.Repeat("|", gBars))
 	if eBars >= 0 {
@@ -106,11 +109,18 @@ func workersCmd(sealing bool) *cli.Command {
 				}
 
 				var disabled string
+				var host string
 				if !stat.Enabled {
 					disabled = color.RedString(" (disabled)")
 				}
+				if stat.IP == "" {
+					host = stat.Info.Hostname
+				} else {
+					host = stat.IP
+				}
+				fmt.Printf("Worker %s, host %s%s\n", stat.id, color.MagentaString(host), disabled)
 
-				fmt.Printf("Worker %s, host %s%s\n", stat.id, color.MagentaString(stat.Info.Hostname), disabled)
+				//fmt.Printf("Worker %s, host %s%s\n", stat.id, color.MagentaString(stat.Info.Hostname), disabled)
 
 				fmt.Printf("\tCPU:  [%s] %d/%d core(s) in use\n",
 					barString(float64(stat.Info.Resources.CPUs), 0, float64(stat.CpuUse)), stat.CpuUse, stat.Info.Resources.CPUs)
@@ -226,7 +236,7 @@ var sealingJobsCmd = &cli.Command{
 		}
 
 		for wid, st := range wst {
-			workerHostnames[wid] = st.Info.Hostname
+			workerHostnames[wid] = st.IP
 		}
 
 		tw := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)

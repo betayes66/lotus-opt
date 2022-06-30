@@ -4,15 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	gofstab "github.com/deniswernert/go-fstab"
+	"github.com/filecoin-project/go-statestore"
+	"github.com/filecoin-project/lotus/extern/sector-storage/ffiwrapper"
+	"github.com/filecoin-project/lotus/tools/msg"
 	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/filecoin-project/lotus/extern/sector-storage/ffiwrapper"
 
 	"github.com/google/uuid"
 	"github.com/ipfs/go-datastore/namespace"
@@ -25,8 +28,6 @@ import (
 
 	"github.com/filecoin-project/go-jsonrpc/auth"
 	paramfetch "github.com/filecoin-project/go-paramfetch"
-	"github.com/filecoin-project/go-statestore"
-
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/build"
 	lcli "github.com/filecoin-project/lotus/cli"
@@ -245,7 +246,6 @@ var runCmd = &cli.Command{
 			Usage: "select gpu index",
 			Value: "0",
 		},
-
 	},
 	Before: func(cctx *cli.Context) error {
 		if cctx.IsSet("address") {
@@ -372,7 +372,7 @@ var runCmd = &cli.Command{
 				apConNum = LIMITNUMBER
 			}
 		}
-		if (workerType == sealtasks.WorkerSealing || cctx.IsSet("precommit1")) && cctx.Bool("precommit1")  && p1ConNum != 0 {
+		if (workerType == sealtasks.WorkerSealing || cctx.IsSet("precommit1")) && cctx.Bool("precommit1") && p1ConNum != 0 {
 			taskTypes = append(taskTypes, sealtasks.TTPreCommit1)
 		}
 		if (workerType == sealtasks.WorkerSealing || cctx.IsSet("unseal")) && cctx.Bool("unseal") {
@@ -470,6 +470,23 @@ var runCmd = &cli.Command{
 			}
 		}
 
+		if os.Getenv("WORKER_PATH") == "" {
+			err := os.Setenv("WORKER_PATH", repoPath)
+			if err != nil {
+				log.Error(err)
+			}
+		}
+
+		storageData, err := ioutil.ReadFile(repoPath + "/storage.json")
+		if err != nil {
+			log.Errorf("read storage.json err:%v\n", err)
+		}
+		var dst stores.StorageConfig
+		err = json.Unmarshal(storageData, &dst)
+		if err != nil {
+			log.Error("unmarshal storage.json err:", err)
+		}
+
 		lr, err := r.Lock(repo.Worker)
 		if err != nil {
 			return err
@@ -533,7 +550,7 @@ var runCmd = &cli.Command{
 
 		workerApi := &sealworker.Worker{
 			LocalWorker: sectorstorage.NewLocalWorker(sectorstorage.WorkerConfig{
-				TaskTypes:                 taskTypes,
+				TaskTypes: taskTypes,
 
 				TaskCfg: sectorstorage.Rwc{
 					IP:        address,
@@ -563,6 +580,26 @@ var runCmd = &cli.Command{
 				return ctx
 			},
 		}
+		//check GPU
+		go func() {
+			for {
+				select {
+				case <-time.Tick(time.Minute * 30):
+					cmd := exec.Command("nvidia-smi")
+					stdout, err := cmd.Output()
+					if err != nil || !strings.Contains(string(stdout), "Driver Version") && string(stdout) != "" {
+						log.Error("GPU ERROR:", string(stdout))
+						host, _ := os.Hostname()
+						g := &msg.GpuMsg{
+							TemplateID: msg.GpuTemplateID,
+							HostIP:     host,
+						}
+						g.SendMessage()
+						time.Sleep(12 * time.Hour)
+					}
+				}
+			}
+		}()
 
 		go func() {
 			<-ctx.Done()
@@ -669,6 +706,51 @@ var runCmd = &cli.Command{
 						log.Info("Worker registered successfully, waiting for tasks")
 
 						readyCh = nil
+
+						go func() {
+							workerNodeApi, wcloser, err1 := lcli.GetWorkerAPI(cctx)
+							if err1 != nil {
+								log.Error("get worker api err:", err1)
+								//return err1
+							}
+							defer wcloser()
+							flag := false
+							//jiang  read file mount system
+							mountPaths := GetFcfsMountPath()
+							/*if len(mountPaths) == 0 {
+								return
+							}*/
+							//read localPath
+							for _, mountPath := range mountPaths {
+								if !strings.HasSuffix(mountPath, "/") {
+									mountPath = mountPath + "/"
+								}
+								for _, val := range dst.StoragePaths {
+									tempPath := val.Path
+									if !strings.HasSuffix(tempPath, "/") {
+										tempPath = tempPath + "/"
+									}
+									if mountPath == tempPath {
+										//is had, continue
+										flag = true
+									}
+								}
+								if !flag {
+									/*cmd := exec.Command("/bin/bash","/usr/local/bin/lotus-worker","storage","attach","--init=false", mountPath)
+									err = cmd.Run()
+									if err != nil {
+										log.Errorf("================Exec lotus-worker storage attach %s err==================\n", mountPath)
+									}*/
+									//fmt.Println("jiang:",string(out))
+									err = workerNodeApi.StorageAddLocal(ctx, mountPath)
+									if err != nil {
+										log.Error("storage add local err:", err)
+									}
+								}
+								flag = false
+							}
+						}()
+
 					case <-heartbeats.C:
 					case <-ctx.Done():
 						return // graceful shutdown
@@ -707,4 +789,18 @@ func extractRoutableIP(timeout time.Duration) (string, error) {
 	localAddr := conn.LocalAddr().(*net.TCPAddr)
 
 	return strings.Split(localAddr.IP.String(), ":")[0], nil
+}
+
+func GetFcfsMountPath() (out []string) {
+	mounts, err := gofstab.ParseProc()
+	if err != nil {
+		log.Errorf("Error while read system mounted disk")
+		return nil
+	}
+	for _, v := range mounts {
+		if strings.Contains(v.File, "fcfs") {
+			out = append(out, v.File)
+		}
+	}
+	return
 }

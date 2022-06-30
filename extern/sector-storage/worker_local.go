@@ -382,7 +382,6 @@ func (l *LocalWorker) DataCid(ctx context.Context, pieceSize abi.UnpaddedPieceSi
 	})
 }
 
-var RwLock = sync.RWMutex{}
 func ln(src string, dst string) error {
 	var errOut bytes.Buffer
 	cmd := exec.Command("/usr/bin/env", "ln", src, dst)
@@ -393,6 +392,7 @@ func ln(src string, dst string) error {
 	return nil
 }
 
+var RwLock = sync.RWMutex{}
 
 func (l *LocalWorker) AddPiece(ctx context.Context, sector storage.SectorRef, epcs []abi.UnpaddedPieceSize, sz abi.UnpaddedPieceSize, r io.Reader) (storiface.CallID, error) {
 	sb, err := l.executor()

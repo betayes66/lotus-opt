@@ -40,12 +40,14 @@ type Resources struct {
  128 * 0.92 = 117
 
 */
-var ParallelNum uint64 = 92
+var ParallelNum uint64 = 25
+
+//var ParallelNum uint64 = 92
 var ParallelDenom uint64 = 100
 
 // TODO: Take NUMA into account
 func (r Resources) Threads(wcpus uint64, gpus int) uint64 {
-	mp := r.MaxParallelism
+	/*mp := r.MaxParallelism
 
 	if r.GPUUtilization > 0 && gpus > 0 && r.MaxParallelismGPU != 0 { // task can use GPUs and worker has some
 		mp = r.MaxParallelismGPU
@@ -59,7 +61,31 @@ func (r Resources) Threads(wcpus uint64, gpus int) uint64 {
 		return n
 	}
 
-	return uint64(mp)
+	return uint64(mp)*/
+	var n uint64
+	if r.MaxParallelism == -1 {
+		switch wcpus {
+		case 8:
+			n = 8
+		//case 16:
+		//	//n = (wcpus * 25) / 100
+		//	n = 16
+		//case 32:
+		//	//n = (wcpus * 50) / 100
+		//	n = (wcpus * ParallelNum) / ParallelDenom
+		//case 64:
+		//	n = (wcpus * 80) / 100
+		default:
+			//n = (wcpus * ParallelNum) / ParallelDenom
+			n = 10
+		}
+		if n == 0 {
+			return wcpus
+		}
+		return n
+	}
+
+	return uint64(r.MaxParallelism)
 }
 
 var ResourceTable = map[sealtasks.TaskType]map[abi.RegisteredSealProof]Resources{

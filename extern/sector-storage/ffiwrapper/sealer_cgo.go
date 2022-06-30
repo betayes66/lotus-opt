@@ -910,13 +910,15 @@ func (sb *Sealer) freeUnsealed(ctx context.Context, sector storage.SectorRef, ke
 			}
 		}
 
-		paths, done, err := sb.sectors.AcquireSector(ctx, sector, storiface.FTUnsealed, 0, storiface.PathStorage)
+		//paths, done, err := sb.sectors.AcquireSector(ctx, sector, storiface.FTUnsealed, 0, storiface.PathStorage)
+		_, done, err := sb.sectors.AcquireSector(ctx, sector, storiface.FTUnsealed, 0, storiface.PathStorage)
+
 		if err != nil {
 			return xerrors.Errorf("acquiring sector cache path: %w", err)
 		}
 		defer done()
 
-		pf, err := partialfile.OpenPartialFile(maxPieceSize, paths.Unsealed)
+		/*pf, err := partialfile.OpenPartialFile(maxPieceSize, paths.Unsealed)
 		if err == nil {
 			var at uint64
 			for sr.HasNext() {
@@ -946,7 +948,7 @@ func (sb *Sealer) freeUnsealed(ctx context.Context, sector storage.SectorRef, ke
 			if !xerrors.Is(err, os.ErrNotExist) {
 				return xerrors.Errorf("opening partial file: %w", err)
 			}
-		}
+		}*/
 
 	}
 

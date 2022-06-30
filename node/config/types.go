@@ -58,8 +58,12 @@ type StorageMiner struct {
 	Fees          MinerFeeConfig
 	Addresses     MinerAddressConfig
 	DAGStore      DAGStoreConfig
+	ListenPhone ListenPhoneConfig
 }
 
+type ListenPhoneConfig struct {
+	PhoneNum []string
+}
 type DAGStoreConfig struct {
 	// Path to the dagstore root directory. This directory contains three
 	// subdirectories, which can be symlinked to alternative locations if

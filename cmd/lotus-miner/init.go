@@ -7,6 +7,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/filecoin-project/go-statestore"
+	"github.com/ipfs/go-datastore"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -20,7 +22,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
-	"github.com/ipfs/go-datastore"
 	"github.com/ipfs/go-datastore/namespace"
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/peer"
@@ -33,7 +34,6 @@ import (
 	paramfetch "github.com/filecoin-project/go-paramfetch"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
-	"github.com/filecoin-project/go-statestore"
 	sectorstorage "github.com/filecoin-project/lotus/extern/sector-storage"
 	"github.com/filecoin-project/lotus/extern/sector-storage/ffiwrapper"
 	"github.com/filecoin-project/lotus/extern/sector-storage/stores"
@@ -236,8 +236,8 @@ var initCmd = &cli.Command{
 				b, err := json.MarshalIndent(&stores.LocalStorageMeta{
 					ID:       storiface.ID(uuid.New().String()),
 					Weight:   10,
-					CanSeal:  true,
-					CanStore: true,
+					CanSeal:  false,
+					CanStore: false,
 				}, "", "  ")
 				if err != nil {
 					return xerrors.Errorf("marshaling storage config: %w", err)

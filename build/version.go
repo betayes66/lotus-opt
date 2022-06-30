@@ -20,7 +20,7 @@ func BuildTypeString() string {
 	case BuildDefault:
 		return ""
 	case BuildMainnet:
-		return "+mainnet"
+		return "+gzbt"
 	case Build2k:
 		return "+2k"
 	case BuildDebug:

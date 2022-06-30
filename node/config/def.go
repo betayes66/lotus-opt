@@ -119,7 +119,7 @@ func DefaultStorageMiner() *StorageMiner {
 			AvailableBalanceBuffer:     types.FIL(big.Zero()),
 			DisableCollateralFallback:  false,
 
-			BatchPreCommits:    true,
+			BatchPreCommits:    false,
 			MaxPreCommitBatch:  miner5.PreCommitSectorBatchMaxSize, // up to 256 sectors
 			PreCommitBatchWait: Duration(24 * time.Hour),           // this should be less than 31.5 hours, which is the expiration of a precommit ticket
 			// XXX snap deals wait deals slack if first
@@ -127,7 +127,7 @@ func DefaultStorageMiner() *StorageMiner {
 
 			CommittedCapacitySectorLifetime: Duration(builtin.EpochDurationSeconds * uint64(policy.GetMaxSectorExpirationExtension()) * uint64(time.Second)),
 
-			AggregateCommits: true,
+			AggregateCommits: false,
 			MinCommitBatch:   miner5.MinAggregatedSectors, // per FIP13, we must have at least four proofs to aggregate, where 4 is the cross over point where aggregation wins out on single provecommit gas costs
 			MaxCommitBatch:   miner5.MaxAggregatedSectors, // maximum 819 sectors, this is the maximum aggregation per FIP13
 			CommitBatchWait:  Duration(24 * time.Hour),    // this can be up to 30 days
@@ -146,11 +146,11 @@ func DefaultStorageMiner() *StorageMiner {
 		},
 
 		Storage: SealerConfig{
-			AllowAddPiece:            true,
-			AllowPreCommit1:          true,
-			AllowPreCommit2:          true,
-			AllowCommit:              true,
-			AllowUnseal:              true,
+			AllowAddPiece:            false,
+			AllowPreCommit1:          false,
+			AllowPreCommit2:          false,
+			AllowCommit:              false,
+			AllowUnseal:              false,
 			AllowReplicaUpdate:       true,
 			AllowProveReplicaUpdate2: true,
 			AllowRegenSectorKey:      true,
@@ -244,6 +244,7 @@ func DefaultStorageMiner() *StorageMiner {
 			MaxConcurrentUnseals:       5,
 			GCInterval:                 Duration(1 * time.Minute),
 		},
+		ListenPhone: ListenPhoneConfig{},
 	}
 
 	cfg.Common.API.ListenAddress = "/ip4/127.0.0.1/tcp/2345/http"

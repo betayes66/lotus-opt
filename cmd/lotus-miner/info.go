@@ -83,7 +83,7 @@ func infoCmdAct(cctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-
+	fmt.Println(color.RedString("%s", "Technical Support By GZBT"))
 	fmt.Println("Enabled subsystems (from miner API):", subsystems)
 
 	subsystems, err = marketsApi.RuntimeSubsystems(ctx)
@@ -597,6 +597,9 @@ func sectorsInfo(ctx context.Context, mapi api.StorageMiner) error {
 	})
 
 	for _, s := range sorted {
+		if s.state == "" {
+			s.state = "Undefined"
+		}
 		_, _ = color.New(stateOrder[s.state].col).Printf("\t%s: %d\n", s.state, s.i)
 	}
 
