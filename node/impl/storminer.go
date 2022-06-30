@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"time"
@@ -461,13 +462,14 @@ func (sm *StorageMinerAPI) SealingAbort(ctx context.Context, call storiface.Call
 }
 
 func (sm *StorageMinerAPI) MarketImportDealData(ctx context.Context, propCid cid.Cid, path string) error {
-	/*fi, err := os.Open(path)
+	fi, err := os.Open(path)
 	if err != nil {
 		return xerrors.Errorf("failed to open file: %w", err)
 	}
-	defer fi.Close() //nolint:errcheck*/
+	defer fi.Close() //nolint:errcheck
 
-	return sm.StorageProvider.ImportDataForDeal(ctx, propCid, path)
+	//return sm.StorageProvider.ImportDataForDeal(ctx, propCid, fi)
+	return sm.StorageProvider.ImportDataForDealX(ctx, propCid, path)
 }
 
 func (sm *StorageMinerAPI) listDeals(ctx context.Context) ([]*api.MarketDeal, error) {
@@ -1159,7 +1161,7 @@ func (sm *StorageMinerAPI) DealsImportData(ctx context.Context, deal cid.Cid, fn
 	}
 	defer fi.Close() //nolint:errcheck*/
 
-	return sm.StorageProvider.ImportDataForDeal(ctx, deal, fname)
+	return sm.StorageProvider.ImportDataForDealX(ctx, deal, fname)
 	//return sm.StorageProvider.ImportDataForDeal(ctx, deal, fi)
 }
 

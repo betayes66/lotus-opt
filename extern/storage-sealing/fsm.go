@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"time"
 
+	"strings"
+
 	"golang.org/x/xerrors"
 
 	"github.com/filecoin-project/go-state-types/abi"
@@ -110,7 +112,8 @@ var fsmPlanners = map[SectorState]func(events []statemachine.Event, state *Secto
 	),
 	Committing: planCommitting,
 	CommitFinalize: planOne(
-		on(SectorFinalized{}, SubmitCommit),
+		on(SectorFinalized{}, FinalizeSector),
+		//on(SectorFinalized{}, SubmitCommit),
 		on(SectorFinalizedAvailable{}, SubmitCommit),
 		on(SectorFinalizeFailed{}, CommitFinalizeFailed),
 	),
@@ -125,7 +128,8 @@ var fsmPlanners = map[SectorState]func(events []statemachine.Event, state *Secto
 		on(SectorRetrySubmitCommit{}, SubmitCommit),
 	),
 	CommitWait: planOne(
-		on(SectorProving{}, FinalizeSector),
+		on(SectorProving{}, Proving),
+		//on(SectorProving{}, FinalizeSector),
 		on(SectorCommitFailed{}, CommitFailed),
 		on(SectorRetrySubmitCommit{}, SubmitCommit),
 	),
@@ -136,7 +140,8 @@ var fsmPlanners = map[SectorState]func(events []statemachine.Event, state *Secto
 	),
 
 	FinalizeSector: planOne(
-		on(SectorFinalized{}, Proving),
+		on(SectorFinalized{}, SubmitCommit),
+		//on(SectorFinalized{}, Proving),
 		on(SectorFinalizedAvailable{}, Available),
 		on(SectorFinalizeFailed{}, FinalizeFailed),
 	),
@@ -760,6 +765,11 @@ func planOne(ts ...func() (mut mutator, next func(*SectorInfo) (more bool, err e
 				}
 
 				if err, iserr := event.User.(error); iserr {
+
+					if strings.Contains(err.Error(),"Invalid vanilla proof generated") {
+						InvalidProofMap.Store(uint64(state.SectorNumber), struct {}{})
+					}
+
 					log.Warnf("sector %d got error event %T: %+v", state.SectorNumber, event.User, err)
 				}
 

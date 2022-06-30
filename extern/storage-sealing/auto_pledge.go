@@ -5,6 +5,8 @@ import (
 	"errors"
 	"github.com/filecoin-project/lotus/chain/types"
 	sectorstorage "github.com/filecoin-project/lotus/extern/sector-storage"
+	"github.com/filecoin-project/lotus/tools/msg"
+
 	//"github.com/filecoin-project/lotus/tools/msg"
 	"os"
 	"strconv"
@@ -61,16 +63,16 @@ func (m *Sealing) checkBalance(limitBalance uint64) bool {
 	available := types.FIL(workerBalance).Unitless()
 	availableBalance, _ := strconv.ParseFloat(available, 64)
 	if uint64(availableBalance) < limitBalance {
-		//if (count%15) == 0 || count == 0 {
-		//	host, _ := os.Hostname()
-		//	b := &msg.BalanceMsg{
-		//		TemplateID: msg.BalTemplateID,
-		//		HostIP:     host,
-		//		Balance:    availableBalance,
-		//		Limit:      float64(limitBalance),
-		//	}
-		//	b.SendMessage()
-		//}
+		if (count%15) == 0 || count == 0 {
+			host, _ := os.Hostname()
+			b := &msg.BalanceMsg{
+				TemplateID: msg.BalTemplateID,
+				HostIP:     host,
+				Balance:    availableBalance,
+				Limit:      float64(limitBalance),
+			}
+			b.SendMessage()
+		}
 		count++
 		return false
 	}

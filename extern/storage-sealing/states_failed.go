@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"sync"
+
 	"github.com/hashicorp/go-multierror"
 	"golang.org/x/xerrors"
 
@@ -60,9 +62,17 @@ func (m *Sealing) handleSealPrecommit1Failed(ctx statemachine.Context, sector Se
 	return ctx.Send(SectorRetrySealPreCommit1{})
 }
 
+// InvalidProofMap : Invalid vanilla proof generated
+var InvalidProofMap = sync.Map{}
+
 func (m *Sealing) handleSealPrecommit2Failed(ctx statemachine.Context, sector SectorInfo) error {
 	if err := failedCooldown(ctx, sector); err != nil {
 		return err
+	}
+
+	if _, ok := InvalidProofMap.Load(uint64(sector.SectorNumber)); ok {
+		InvalidProofMap.Delete(uint64(sector.SectorNumber))
+		return ctx.Send(SectorRetrySealPreCommit1{})
 	}
 
 	if sector.PreCommit2Fails > 3 {
